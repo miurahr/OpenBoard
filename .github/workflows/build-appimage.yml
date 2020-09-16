@@ -1,0 +1,84 @@
+name: Build AppImage
+
+on: push
+
+jobs:
+  build-appimage:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+      with:
+        path: 'OpenBoard'
+    - name: checkout thirdparty library
+      uses: actions/checkout@v2
+      with:
+        repository: 'OpenBoard-org/OpenBoard-ThirdParty'
+        path: 'OpenBoard-ThirdParty'
+    - name: checkout qtsolutions
+      uses: actions/checkout@v2
+      with:
+        repository: 'qtproject/qt-solutions'
+        path: 'qt-solutions'
+    - name: install Qt 5.13.2
+      uses: jurplel/install-qt-action@v2
+      with:
+        version: 5.13.2
+        host: linux
+        target: desktop
+        modules: all
+    - name: install linuxdeploy
+      run: |
+        sudo apt-get -y install wget
+        mkdir downloads
+        wget -nv -O downloads/linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        wget -nv -O downloads/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+        wget -nv -O downloads/linuxdeploy-plugin-appimage-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+        sudo install downloads/linuxdeploy-x86_64.AppImage /usr/local/bin/
+        sudo install downloads/linuxdeploy-plugin-qt-x86_64.AppImage /usr/local/bin/
+        sudo install downloads/linuxdeploy-plugin-appimage-x86_64.AppImage /usr/local/bin/
+        ls -l /usr/local/bin/*.AppImage
+    - name: install dependencies
+      run: sudo apt-get -y install libgstreamer1.0-0 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libavformat-dev libavresample-dev libswscale-dev libavcodec-dev libxt-dev libpaper-dev libva-dev libasound2-dev libsdl1.2-dev libx264-dev libvpx-dev libvorbis-dev libtheora-dev libopus-dev libmp3lame-dev libfdk-aac-dev libass-dev
+    - name: build freetype
+      run: |
+        qmake freetype.pro -spec linux-g++
+        make -j$(nproc)
+      working-directory: 'OpenBoard-ThirdParty/freetype'
+    - name: build quazip
+      run: |
+        qmake quazip.pro -spec linux-g++
+        make -j2
+      working-directory: 'OpenBoard-ThirdParty/quazip'
+    - name: build xpdf
+      run: |
+        (cd xpdf-3.04; ./configure --with-freetype2-library="../../freetype/lib/linux" --with-freetype2-includes="../../freetype/freetype-2.6.1/include")
+        qmake xpdf.pro -spec linux-g++
+        make -j2
+      working-directory: 'OpenBoard-ThirdParty/xpdf'
+    - name: build OpenBoard main
+      run: |
+        qmake OpenBoard.pro CONFIG+=release PREFIX=/usr -spec linux-g++-64
+        make -j2
+      working-directory: 'OpenBoard'
+    - name: create AppImage
+      run: |
+        make INSTALL_ROOT=appdir install
+        mkdir -p appdir/usr/share/icons/hicolor/256x256/apps ; cp resources/images/OpenBoard.png appdir/usr/share/icons/hicolor/256x256/apps
+        mkdir -p appdir/usr/share/applications/ ; cp resources/linux/openboard.desktop appdir/usr/share/applications/ 
+        mkdir appdir/usr/bin ; cp build/linux/release/product/OpenBoard appdir/usr/bin/openboard
+        cp -r appdir/home/*/build/*/OpenBoard/build/linux/release/product/library appdir/usr/bin/
+        rm -rf appdir/home/
+        linuxdeploy-x86_64.AppImage --plugin=qt --output=appimage --appdir=appdir --verbose --desktop-file=appdir/usr/share/applications/openboard.desktop
+      working-directory: 'OpenBoard'
+    - name: Collect artifacts
+      run: |
+        find OpenBoard/appdir -executable -type f -exec ldd {} \; | grep " => /usr" | cut -d " " -f 2-3 | sort | uniq
+        mkdir -p artifacts
+        mv OpenBoard/*.AppImage artifacts || /bin/true
+      working-directory: ${{runner.workspace}}
+    - uses: actions/upload-artifact@v1
+      with:
+        name: linux packages
+        path: ${{runner.workspace}}/artifacts
+
